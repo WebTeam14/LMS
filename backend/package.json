@@ -1,0 +1,43 @@
+{
+  "name": "unisphere-backend",
+  "version": "0.1.0",
+  "description": "UniSphere University Digital Campus Platform - Backend",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "lint": "eslint src/",
+    "seed": "node scripts/seed.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": ["unisphere", "lms", "university", "mern"],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.21.0",
+    "mongoose": "^8.7.0",
+    "ioredis": "^5.4.1",
+    "bullmq": "^5.13.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "zod": "^3.23.8",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "express-rate-limit": "^7.4.0",
+    "morgan": "^1.10.0",
+    "dotenv": "^16.4.5",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.8.0",
+    "uuid": "^10.0.0",
+    "http-status-codes": "^2.3.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "eslint": "^9.11.0"
+  }
+}
