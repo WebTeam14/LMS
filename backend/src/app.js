@@ -13,28 +13,18 @@ import v1Routes from './routes/v1/index.js';
 
 const app = express();
 
-// Security & parsing
+// Security headers & basic parsing
 app.use(helmet());
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Logging
+// HTTP request logging
 if (config.env !== 'test') {
   app.use(morgan(config.env === 'development' ? 'dev' : 'combined'));
 }
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.max,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests' } },
-});
-app.use(limiter);
-
-// Health check endpoint
+// Health check endpoint (exempt from rate limits for orchestrators & monitoring)
 app.get('/health', (req, res) => {
   const mongoStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
   const redisClient = getRedisClient();
@@ -53,7 +43,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Readiness probe for Kubernetes / Docker
+// Readiness probe for Kubernetes / Docker (exempt from rate limits)
 app.get('/ready', (req, res) => {
   const isDbReady = mongoose.connection.readyState === 1;
   const redisClient = getRedisClient();
@@ -66,10 +56,20 @@ app.get('/ready', (req, res) => {
   });
 });
 
+// API Rate limiting (applied to business and API routes)
+const limiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests' } },
+});
+app.use(config.apiPrefix, limiter);
+
 // API v1 Routes
 app.use(config.apiPrefix, v1Routes);
 
-// 404 + error handler
+// 404 + centralized error handling
 app.use(notFound);
 app.use(errorHandler);
 

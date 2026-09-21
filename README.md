@@ -58,6 +58,8 @@ npm run dev
 
 ## Phase Overview
 
-See `PROJECT_PROGRESS.md` for live status.
+See `PROJECT_PROGRESS.md` for detailed audit reports and live status.
 
-Current focus: **Phase 0 — Product, Requirements & Architecture** (completing documentation and scaffolding).
+- **Phase 0 (Product & Architecture):** COMPLETE
+- **Phase 1 (Foundation & DevOps):** COMPLETE (Audited & Verified)
+- **Next Milestone:** **Phase 2 — Authentication, Security & RBAC**

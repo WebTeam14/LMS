@@ -7,19 +7,38 @@ const errorHandler = (err, req, res, _next) => {
     return errorResponse(res, err);
   }
 
+  // Zod schema validation errors
+  if (err.name === 'ZodError' || Array.isArray(err.issues)) {
+    const details = (err.issues || []).map((issue) => ({
+      field: issue.path.join('.'),
+      message: issue.message,
+    }));
+    return errorResponse(res, new AppError('Validation failed', 400, 'VALIDATION_ERROR', details));
+  }
+
   // Mongoose validation
   if (err.name === 'ValidationError') {
-    const details = Object.values(err.errors).map((e) => ({
+    const details = Object.values(err.errors || {}).map((e) => ({
       field: e.path,
       message: e.message,
     }));
     return errorResponse(res, new AppError('Validation failed', 400, 'VALIDATION_ERROR', details));
   }
 
+  // Mongoose CastError (invalid ObjectId or type casting)
+  if (err.name === 'CastError') {
+    return errorResponse(res, new AppError(`Invalid value for ${err.path}: ${err.value}`, 400, 'BAD_REQUEST'));
+  }
+
   // Mongoose duplicate key
   if (err.code === 11000) {
     const field = Object.keys(err.keyPattern || {})[0] || 'field';
     return errorResponse(res, new AppError(`Duplicate value for ${field}`, 409, 'CONFLICT'));
+  }
+
+  // JSON syntax error (malformed payload from client)
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return errorResponse(res, new AppError('Malformed JSON payload in request body', 400, 'BAD_REQUEST'));
   }
 
   // JWT errors
