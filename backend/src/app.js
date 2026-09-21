@@ -3,10 +3,13 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import mongoose from 'mongoose';
 import config from './config/index.js';
+import { getRedisClient } from './config/redis.js';
 import errorHandler from './common/middleware/errorHandler.js';
 import notFound from './common/middleware/notFound.js';
 import { successResponse } from './common/utils/response.js';
+import v1Routes from './routes/v1/index.js';
 
 const app = express();
 
@@ -31,18 +34,40 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Health checks
+// Health check endpoint
 app.get('/health', (req, res) => {
-  successResponse(res, { status: 'ok', service: config.appName, timestamp: new Date().toISOString() });
+  const mongoStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  const redisClient = getRedisClient();
+  const redisStatus = redisClient?.status || 'disconnected';
+
+  successResponse(res, {
+    status: 'ok',
+    service: config.appName,
+    environment: config.env,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    components: {
+      database: mongoStatus,
+      redis: redisStatus,
+    },
+  });
 });
 
+// Readiness probe for Kubernetes / Docker
 app.get('/ready', (req, res) => {
-  // Later: check MongoDB + Redis connectivity
-  successResponse(res, { status: 'ready' });
+  const isDbReady = mongoose.connection.readyState === 1;
+  const redisClient = getRedisClient();
+  const isRedisReady = redisClient?.status === 'ready' || redisClient?.status === 'connect';
+
+  successResponse(res, {
+    status: isDbReady && isRedisReady ? 'ready' : 'degraded',
+    database: isDbReady,
+    redis: isRedisReady,
+  });
 });
 
-// API routes will be mounted here as modules are added
-// Example: app.use(`${config.apiPrefix}/auth`, authRoutes);
+// API v1 Routes
+app.use(config.apiPrefix, v1Routes);
 
 // 404 + error handler
 app.use(notFound);

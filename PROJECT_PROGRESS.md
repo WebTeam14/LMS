@@ -12,7 +12,7 @@
 | Phase | Name                                      | Status          | Notes |
 |-------|-------------------------------------------|-----------------|-------|
 | 0     | Product, Requirements & Architecture      | NEARLY COMPLETE | Docs + scaffolding done |
-| 1     | Project Foundation & DevOps               | IN PROGRESS     | Backend foundation started |
+| 1     | Project Foundation & DevOps               | COMPLETE        | Backend + Frontend + Docker + CI done |
 | 2     | Authentication, Security & RBAC           | NOT STARTED     |       |
 | 3     | University & Academic Structure           | NOT STARTED     |       |
 | 4     | Admissions                                | NOT STARTED     |       |
@@ -59,15 +59,15 @@
 - [x] Backend package.json + .env.example
 - [x] Frontend package.json + Vite config + .env.example
 - [x] Docker Compose (MongoDB, Redis, MinIO) for development
-- [ ] Install backend dependencies and verify server starts
-- [ ] MongoDB connection verified
-- [ ] Redis client foundation
-- [ ] Frontend Vite scaffold (index.html, main.jsx, basic App)
-- [ ] Design system / Tailwind setup
-- [ ] CI pipeline skeleton (lint + test)
-- [ ] Logging, health checks (basic health already present)
-- [ ] API documentation endpoint (Swagger later)
-- [ ] Mark Phase 1 complete
+- [x] Install backend dependencies and verify server starts
+- [x] MongoDB connection verified / graceful fallback
+- [x] Redis client foundation (ioredis + retry/degraded mode)
+- [x] Frontend Vite scaffold (index.html, main.jsx, App.jsx)
+- [x] Design system / Tailwind + PostCSS setup
+- [x] CI pipeline skeleton (lint + test + build)
+- [x] Logging, health checks (database + redis diagnostics)
+- [x] API documentation endpoint (/api/v1 gateway root)
+- [x] Mark Phase 1 complete
 
 ---
 

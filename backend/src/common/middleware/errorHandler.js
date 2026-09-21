@@ -2,7 +2,7 @@ import { errorResponse } from '../utils/response.js';
 import AppError from '../errors/AppError.js';
 import config from '../../config/index.js';
 
-const errorHandler = (err, req, res, next) => {
+const errorHandler = (err, req, res, _next) => {
   if (err instanceof AppError) {
     return errorResponse(res, err);
   }
