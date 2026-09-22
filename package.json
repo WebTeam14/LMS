@@ -1,0 +1,15 @@
+{
+  "name": "unisphere-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UniSphere - Advanced University Digital Learning & Academic Platform",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "build": "npm --prefix frontend run build",
+    "test": "npm --prefix backend test",
+    "lint": "npm --prefix frontend run lint && npm --prefix backend run lint",
+    "seed": "npm --prefix backend run seed"
+  }
+}
