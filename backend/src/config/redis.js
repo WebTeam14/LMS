@@ -25,15 +25,15 @@ export const initRedis = () => {
     });
 
     redisClient.on('error', (err) => {
-      logger.warn(`[Redis] Connection warning: ${err.message}`);
+      if (config.env !== 'test') logger.warn(`[Redis] Connection warning: ${err.message}`);
     });
 
     // Attempt non-blocking connect
     redisClient.connect().catch((err) => {
-      logger.warn(`[Redis] Initial connection deferred: ${err.message}`);
+      if (config.env !== 'test') logger.warn(`[Redis] Initial connection deferred: ${err.message}`);
     });
   } catch (error) {
-    logger.warn(`[Redis] Initialization error: ${error.message}`);
+    if (config.env !== 'test') logger.warn(`[Redis] Initialization error: ${error.message}`);
   }
 
   return redisClient;
