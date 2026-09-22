@@ -4,6 +4,7 @@ import Role from '../models/Role.js';
 import UserRole from '../models/UserRole.js';
 import RefreshToken from '../models/RefreshToken.js';
 import AuditLog from '../models/AuditLog.js';
+import Tenant from '../../university/models/Tenant.js';
 import AppError from '../../../common/errors/AppError.js';
 import {
   generateAccessToken,
@@ -84,9 +85,21 @@ export const register = async ({
   ipAddress,
   userAgent,
 }) => {
+  // Validate tenant exists and is active (UNI-015)
+  const tenant = await Tenant.findOne({ _id: tenantId, isDeleted: false });
+  if (!tenant) {
+    throw new AppError('The specified institution/tenant was not found.', 404, 'TENANT_NOT_FOUND');
+  }
+  if (tenant.status !== 'active') {
+    throw new AppError('The institution/tenant is currently inactive or suspended.', 403, 'TENANT_INACTIVE');
+  }
+  if (tenant.settings && tenant.settings.allowSelfRegistration === false) {
+    throw new AppError('Self-registration is disabled for this institution.', 403, 'SELF_REGISTRATION_DISABLED');
+  }
+
   const normalizedEmail = email.toLowerCase().trim();
 
-  // Check unique email within tenant
+  // Check unique email within tenant (active accounts) (UNI-018)
   const existingUser = await User.findOne({
     tenantId,
     email: normalizedEmail,
@@ -104,6 +117,11 @@ export const register = async ({
   // Hash password with bcrypt cost 12
   const passwordHash = await bcrypt.hash(password, 12);
 
+  // Generate email verification token (UNI-016)
+  const verificationToken = generateRandomTokenString(32);
+  const emailVerificationToken = hashToken(verificationToken);
+  const emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
   const user = await User.create({
     tenantId,
     firstName,
@@ -111,11 +129,15 @@ export const register = async ({
     email: normalizedEmail,
     passwordHash,
     status: 'active',
+    emailVerified: false,
+    emailVerificationToken,
+    emailVerificationExpires,
   });
 
-  // Assign requested or default role
+  // Assign role (default to STUDENT)
+  const effectiveRoleCode = roleCode || 'STUDENT';
   const role = await Role.findOne({
-    code: roleCode,
+    code: effectiveRoleCode,
     $or: [{ tenantId }, { tenantId: null }],
   });
 
@@ -157,19 +179,53 @@ export const register = async ({
       email: user.email,
       tenantId: user.tenantId,
       status: user.status,
+      emailVerified: user.emailVerified,
       roles,
       rolesDetail,
       permissions,
     },
     tokens,
+    verificationToken,
   };
 };
 
 export const login = async ({ email, password, tenantId, ipAddress, userAgent }) => {
   const normalizedEmail = email.toLowerCase().trim();
 
+  // Multi-tenant disambiguation if tenantId was not provided (UNI-017)
+  let resolvedTenantId = tenantId;
+  if (!resolvedTenantId) {
+    const matchingUsers = await User.find({
+      email: normalizedEmail,
+      isDeleted: false,
+    }).select('_id tenantId');
+
+    if (matchingUsers.length > 1) {
+      throw new AppError(
+        'This email is associated with multiple institutions. Please specify your institution/tenant ID.',
+        400,
+        'TENANT_REQUIRED',
+        { tenantIds: matchingUsers.map((u) => u.tenantId.toString()) }
+      );
+    }
+    if (matchingUsers.length === 1) {
+      resolvedTenantId = matchingUsers[0].tenantId;
+    }
+  }
+
+  // Validate tenant if specified or resolved
+  if (resolvedTenantId) {
+    const tenant = await Tenant.findOne({ _id: resolvedTenantId, isDeleted: false });
+    if (!tenant) {
+      throw new AppError('The specified institution/tenant was not found.', 404, 'TENANT_NOT_FOUND');
+    }
+    if (tenant.status !== 'active') {
+      throw new AppError('The institution/tenant is currently inactive or suspended.', 403, 'TENANT_INACTIVE');
+    }
+  }
+
   const query = { email: normalizedEmail, isDeleted: false };
-  if (tenantId) query.tenantId = tenantId;
+  if (resolvedTenantId) query.tenantId = resolvedTenantId;
 
   // Find user and explicitly select passwordHash + lockUntil + failedLoginAttempts
   const user = await User.findOne(query).select('+passwordHash +failedLoginAttempts +lockUntil');
@@ -346,6 +402,14 @@ export const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
 };
 
 export const logout = async ({ refreshToken, userId, ipAddress, userAgent }) => {
+  if (!refreshToken && !userId) {
+    throw new AppError(
+      'Refresh token or authenticated user session is required to log out.',
+      400,
+      'LOGOUT_CREDENTIAL_REQUIRED'
+    );
+  }
+
   if (refreshToken) {
     const tokenHash = hashToken(refreshToken);
     await RefreshToken.updateOne(
@@ -365,6 +429,122 @@ export const logout = async ({ refreshToken, userId, ipAddress, userAgent }) => 
   }
 
   return { success: true };
+};
+
+export const forgotPassword = async ({ email, tenantId, ipAddress, userAgent }) => {
+  const normalizedEmail = email.toLowerCase().trim();
+  const query = { email: normalizedEmail, isDeleted: false };
+  if (tenantId) query.tenantId = tenantId;
+
+  const users = await User.find(query);
+  if (users.length === 0) {
+    // Prevent email enumeration
+    return {
+      message: 'If an account exists with that email, a password reset link has been sent.',
+    };
+  }
+
+  if (users.length > 1 && !tenantId) {
+    throw new AppError(
+      'This email is associated with multiple institutions. Please specify your institution/tenant ID.',
+      400,
+      'TENANT_REQUIRED',
+      { tenantIds: users.map((u) => u.tenantId.toString()) }
+    );
+  }
+
+  const user = users[0];
+  const resetToken = generateRandomTokenString(32);
+  const hashedToken = hashToken(resetToken);
+
+  user.passwordResetToken = hashedToken;
+  user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  await user.save();
+
+  await AuditLog.create({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: 'PASSWORD_RESET_REQUEST',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    message: 'If an account exists with that email, a password reset link has been sent.',
+    resetToken, // Provided for testing and email worker dispatch
+  };
+};
+
+export const resetPassword = async ({ token, newPassword, ipAddress, userAgent }) => {
+  const hashedToken = hashToken(token);
+  const user = await User.findOne({
+    passwordResetToken: hashedToken,
+    passwordResetExpires: { $gt: new Date() },
+    isDeleted: false,
+  }).select('+passwordResetToken +passwordResetExpires +passwordHash');
+
+  if (!user) {
+    throw new AppError('Password reset token is invalid or has expired.', 400, 'INVALID_RESET_TOKEN');
+  }
+
+  user.passwordHash = await bcrypt.hash(newPassword, 12);
+  user.passwordResetToken = undefined;
+  user.passwordResetExpires = undefined;
+  user.passwordChangedAt = new Date();
+  await user.save();
+
+  // Invalidate all active refresh tokens on password reset
+  await RefreshToken.updateMany(
+    { userId: user._id, isRevoked: false },
+    { $set: { isRevoked: true, revokedAt: new Date() } }
+  );
+
+  await AuditLog.create({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: 'PASSWORD_RESET_SUCCESS',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    success: true,
+    message: 'Password has been reset successfully. Please log in with your new password.',
+  };
+};
+
+export const verifyEmail = async ({ token, ipAddress, userAgent }) => {
+  const hashedToken = hashToken(token);
+  const user = await User.findOne({
+    emailVerificationToken: hashedToken,
+    emailVerificationExpires: { $gt: new Date() },
+    isDeleted: false,
+  }).select('+emailVerificationToken +emailVerificationExpires');
+
+  if (!user) {
+    throw new AppError('Email verification token is invalid or has expired.', 400, 'INVALID_VERIFICATION_TOKEN');
+  }
+
+  user.emailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpires = undefined;
+  await user.save();
+
+  await AuditLog.create({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: 'EMAIL_VERIFIED',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    success: true,
+    message: 'Email address has been verified successfully.',
+  };
 };
 
 export const changePassword = async ({ userId, currentPassword, newPassword, ipAddress, userAgent }) => {

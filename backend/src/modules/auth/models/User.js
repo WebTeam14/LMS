@@ -77,6 +77,14 @@ const userSchema = new Schema(
       type: Date,
       select: false,
     },
+    emailVerificationToken: {
+      type: String,
+      select: false,
+    },
+    emailVerificationExpires: {
+      type: Date,
+      select: false,
+    },
     isDeleted: {
       type: Boolean,
       default: false,
@@ -103,6 +111,8 @@ const userSchema = new Schema(
         delete ret.passwordHash;
         delete ret.passwordResetToken;
         delete ret.passwordResetExpires;
+        delete ret.emailVerificationToken;
+        delete ret.emailVerificationExpires;
         delete ret.__v;
         return ret;
       },
@@ -111,7 +121,10 @@ const userSchema = new Schema(
 );
 
 // Compound index: email must be unique within a tenant for active (non-deleted) accounts
-userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
+userSchema.index(
+  { tenantId: 1, email: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } }
+);
 userSchema.index({ tenantId: 1, status: 1 });
 userSchema.index({ tenantId: 1, isDeleted: 1 });
 

@@ -6,8 +6,12 @@ export const register = async (req, res, next) => {
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
+    // Discard any roleCode sent by client; public registration is strictly for STUDENT (UNI-014)
+    const { roleCode: _omittedRole, ...registrationData } = req.body;
+
     const result = await authService.register({
-      ...req.body,
+      ...registrationData,
+      roleCode: 'STUDENT',
       ipAddress,
       userAgent,
     });
@@ -67,6 +71,59 @@ export const logout = async (req, res, next) => {
     });
 
     return successResponse(res, { message: 'Logged out successfully' }, null, 200);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const forgotPassword = async (req, res, next) => {
+  try {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = await authService.forgotPassword({
+      email: req.body.email,
+      tenantId: req.body.tenantId,
+      ipAddress,
+      userAgent,
+    });
+
+    return successResponse(res, result, null, 200);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resetPassword = async (req, res, next) => {
+  try {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = await authService.resetPassword({
+      token: req.body.token,
+      newPassword: req.body.newPassword,
+      ipAddress,
+      userAgent,
+    });
+
+    return successResponse(res, result, null, 200);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const verifyEmail = async (req, res, next) => {
+  try {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = await authService.verifyEmail({
+      token: req.body.token,
+      ipAddress,
+      userAgent,
+    });
+
+    return successResponse(res, result, null, 200);
   } catch (error) {
     next(error);
   }

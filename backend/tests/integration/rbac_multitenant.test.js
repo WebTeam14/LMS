@@ -4,6 +4,7 @@ import app from '../../src/app.js';
 import User from '../../src/modules/auth/models/User.js';
 import Role from '../../src/modules/auth/models/Role.js';
 import UserRole from '../../src/modules/auth/models/UserRole.js';
+import Tenant from '../../src/modules/university/models/Tenant.js';
 import { seedSystemRoles } from '../../src/modules/rbac/services/role.service.js';
 import { register } from '../../src/modules/auth/services/auth.service.js';
 import { closeRedis } from '../../src/config/redis.js';
@@ -23,10 +24,31 @@ describe('RBAC & Multi-Tenancy Isolation API (Integration Tests)', () => {
     if (mongoose.connection.readyState === 0) {
       await mongoose.connect(TEST_DB_URI);
     }
+    await Tenant.deleteMany({});
     await User.deleteMany({});
     await Role.deleteMany({});
     await UserRole.deleteMany({});
     await seedSystemRoles();
+
+    // Create Tenant records
+    await Tenant.create([
+      {
+        _id: tenantA,
+        name: 'University A',
+        code: 'UNI_A',
+        slug: 'uni-a',
+        domain: 'unia.edu',
+        status: 'active',
+      },
+      {
+        _id: tenantB,
+        name: 'University B',
+        code: 'UNI_B',
+        slug: 'uni-b',
+        domain: 'unib.edu',
+        status: 'active',
+      },
+    ]);
 
     // 1. Create University Admin in Tenant A
     const adminA = await register({
@@ -74,6 +96,7 @@ describe('RBAC & Multi-Tenancy Isolation API (Integration Tests)', () => {
   });
 
   afterAll(async () => {
+    await Tenant.deleteMany({});
     await User.deleteMany({});
     await Role.deleteMany({});
     await UserRole.deleteMany({});

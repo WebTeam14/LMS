@@ -15,7 +15,7 @@ export const registerSchema = z.object({
   email: z.string().trim().email('Valid email is required'),
   password: passwordComplexity,
   tenantId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Valid 24-character hex Tenant ID is required'),
-  roleCode: z.string().trim().toUpperCase().optional().default('STUDENT'),
+  // roleCode is deliberately excluded to prevent privilege escalation (UNI-014)
 });
 
 export const loginSchema = z.object({
@@ -29,6 +29,10 @@ export const loginSchema = z.object({
 
 export const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required'),
+});
+
+export const logoutSchema = z.object({
+  refreshToken: z.string().optional(),
 });
 
 export const changePasswordSchema = z.object({
@@ -47,4 +51,8 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
   token: z.string().min(1, 'Reset token is required'),
   newPassword: passwordComplexity,
+});
+
+export const verifyEmailSchema = z.object({
+  token: z.string().min(1, 'Email verification token is required'),
 });

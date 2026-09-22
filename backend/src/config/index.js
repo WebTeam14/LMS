@@ -12,13 +12,21 @@ const corsOrigin = rawCorsOrigin.includes(',')
 const accessSecret = process.env.JWT_ACCESS_SECRET || 'dev-access-secret-change-in-production';
 const refreshSecret = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-change-in-production';
 
-// In production, enforce that secrets are not default placeholders
+const isWeakSecret = (sec) => {
+  if (!sec || typeof sec !== 'string') return true;
+  if (sec.trim().length < 32) return true;
+  const lower = sec.toLowerCase();
+  const prohibited = ['dev', 'change', 'placeholder', 'example', 'secret', 'default', 'test', 'password', 'sample'];
+  return prohibited.some((token) => lower.includes(token));
+};
+
+// In production, enforce that secrets are not default placeholders and have sufficient entropy
 if (env === 'production') {
-  if (!process.env.JWT_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET.includes('dev-access-secret')) {
-    throw new Error('[Security] JWT_ACCESS_SECRET must be explicitly set to a secure string in production');
+  if (isWeakSecret(process.env.JWT_ACCESS_SECRET)) {
+    throw new Error('[Security] JWT_ACCESS_SECRET must be explicitly set to a high-entropy string of at least 32 characters in production without placeholder terms.');
   }
-  if (!process.env.JWT_REFRESH_SECRET || process.env.JWT_REFRESH_SECRET.includes('dev-refresh-secret')) {
-    throw new Error('[Security] JWT_REFRESH_SECRET must be explicitly set to a secure string in production');
+  if (isWeakSecret(process.env.JWT_REFRESH_SECRET)) {
+    throw new Error('[Security] JWT_REFRESH_SECRET must be explicitly set to a high-entropy string of at least 32 characters in production without placeholder terms.');
   }
 }
 
