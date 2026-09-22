@@ -49,7 +49,11 @@ export const getRedisClient = () => {
 export const closeRedis = async () => {
   if (redisClient) {
     try {
-      await redisClient.quit();
+      if (redisClient.status === 'ready') {
+        await redisClient.quit();
+      } else {
+        redisClient.disconnect();
+      }
       logger.info('[Redis] Connection closed');
     } catch (err) {
       logger.warn(`[Redis] Error during quit: ${err.message}`);
