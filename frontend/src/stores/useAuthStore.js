@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import api from '../services/api.js';
+import authService from '../features/auth/services/authService.js';
 
-const safeGetToken = (key) => {
+const safeGetItem = (key) => {
   try {
     return typeof window !== 'undefined' ? localStorage.getItem(key) : null;
   } catch {
@@ -9,99 +9,109 @@ const safeGetToken = (key) => {
   }
 };
 
-const safeSetToken = (key, token) => {
+const safeSetItem = (key, val) => {
   try {
     if (typeof window !== 'undefined') {
-      localStorage.setItem(key, token);
+      localStorage.setItem(key, val);
     }
   } catch {
     // Storage quota or restriction failure
   }
 };
 
-const safeRemoveToken = (key) => {
+const safeRemoveItem = (key) => {
   try {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(key);
     }
   } catch {
-    // Ignore storage deletion errors
+    // Storage deletion error
   }
 };
 
-const initialAccessToken = safeGetToken('unisphere_access_token');
+const initialAccessToken = safeGetItem('unisphere_access_token');
+const initialRefreshToken = safeGetItem('unisphere_refresh_token');
 
 export const useAuthStore = create((set, get) => ({
   user: null,
-  token: initialAccessToken,
+  accessToken: initialAccessToken,
+  refreshToken: initialRefreshToken,
   roles: [],
   permissions: [],
   isAuthenticated: Boolean(initialAccessToken),
-  loading: false,
+  isLoading: false,
+  initialized: false,
 
   setAuth: ({ user, tokens, roles = [], permissions = [] }) => {
-    if (tokens?.accessToken) {
-      safeSetToken('unisphere_access_token', tokens.accessToken);
-    }
-    if (tokens?.refreshToken) {
-      safeSetToken('unisphere_refresh_token', tokens.refreshToken);
-    }
+    const accToken = tokens?.accessToken || get().accessToken;
+    const refToken = tokens?.refreshToken || get().refreshToken;
+
+    if (tokens?.accessToken) safeSetItem('unisphere_access_token', tokens.accessToken);
+    if (tokens?.refreshToken) safeSetItem('unisphere_refresh_token', tokens.refreshToken);
+
+    const userRoles = roles.length > 0 ? roles : user?.roles || [];
+    const userPermissions = permissions.length > 0 ? permissions : user?.permissions || [];
 
     set({
       user,
-      token: tokens?.accessToken || get().token,
-      roles: roles.length > 0 ? roles : user?.roles || [],
-      permissions: permissions.length > 0 ? permissions : user?.permissions || [],
-      isAuthenticated: true,
+      accessToken: accToken,
+      refreshToken: refToken,
+      roles: userRoles,
+      permissions: userPermissions,
+      isAuthenticated: Boolean(accToken),
+    });
+  },
+
+  setUser: (user) => {
+    set({
+      user,
+      roles: user?.roles || get().roles,
+      permissions: user?.permissions || get().permissions,
     });
   },
 
   login: async ({ email, password, tenantId }) => {
-    set({ loading: true });
+    set({ isLoading: true });
     try {
-      const payload = { email, password };
-      if (tenantId) payload.tenantId = tenantId;
-
-      const res = await api.post('/auth/login', payload);
-      const { user, tokens } = res.data;
-
+      const { user, tokens } = await authService.login({ email, password, tenantId });
       get().setAuth({
         user,
         tokens,
         roles: user.roles || [],
         permissions: user.permissions || [],
       });
-
       return { success: true, user };
     } finally {
-      set({ loading: false });
+      set({ isLoading: false });
     }
   },
 
-  fetchProfile: async () => {
-    if (!safeGetToken('unisphere_access_token')) return null;
+  register: async ({ firstName, lastName, email, password, tenantId }) => {
+    set({ isLoading: true });
     try {
-      const res = await api.get('/auth/me');
-      const user = res.data;
-      set({
+      const { user, tokens, verificationToken } = await authService.register({
+        firstName,
+        lastName,
+        email,
+        password,
+        tenantId,
+      });
+      get().setAuth({
         user,
+        tokens,
         roles: user.roles || [],
         permissions: user.permissions || [],
-        isAuthenticated: true,
       });
-      return user;
-    } catch {
-      get().clearAuth();
-      return null;
+      return { success: true, user, verificationToken };
+    } finally {
+      set({ isLoading: false });
     }
   },
 
   logout: async () => {
-    const refreshToken = safeGetToken('unisphere_refresh_token');
+    const refToken = get().refreshToken || safeGetItem('unisphere_refresh_token');
     try {
-      if (refreshToken) {
-        await api.post('/auth/logout', { refreshToken });
-      }
+      await authService.logout(refToken);
     } catch {
       // Ignore network errors during logout
     } finally {
@@ -109,27 +119,59 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  hasRole: (role) => {
-    const { roles } = get();
-    return roles.map((r) => r.toUpperCase()).includes(role.toUpperCase());
-  },
-
-  can: (permission) => {
-    const { permissions, roles } = get();
-    if (roles.map((r) => r.toUpperCase()).includes('SUPER_ADMIN')) return true;
-    return permissions.includes(permission);
-  },
-
   clearAuth: () => {
-    safeRemoveToken('unisphere_access_token');
-    safeRemoveToken('unisphere_refresh_token');
+    safeRemoveItem('unisphere_access_token');
+    safeRemoveItem('unisphere_refresh_token');
     set({
       user: null,
-      token: null,
+      accessToken: null,
+      refreshToken: null,
       roles: [],
       permissions: [],
       isAuthenticated: false,
     });
+  },
+
+  hasRole: (role) => {
+    const { roles } = get();
+    if (!role) return true;
+    return roles.some((r) => r.toUpperCase() === role.toUpperCase());
+  },
+
+  can: (permission) => {
+    const { permissions, roles } = get();
+    if (!permission) return true;
+    if (roles.some((r) => r.toUpperCase() === 'SUPER_ADMIN')) return true;
+    if (permissions.includes('*')) return true;
+    return permissions.includes(permission);
+  },
+
+  initializeAuth: async () => {
+    const storedAccessToken = safeGetItem('unisphere_access_token');
+    const storedRefreshToken = safeGetItem('unisphere_refresh_token');
+
+    if (!storedAccessToken && !storedRefreshToken) {
+      set({ initialized: true, isLoading: false, isAuthenticated: false });
+      return;
+    }
+
+    set({ isLoading: true });
+    try {
+      const user = await authService.getMe();
+      set({
+        user,
+        accessToken: storedAccessToken,
+        refreshToken: storedRefreshToken,
+        roles: user.roles || [],
+        permissions: user.permissions || [],
+        isAuthenticated: true,
+        initialized: true,
+        isLoading: false,
+      });
+    } catch {
+      get().clearAuth();
+      set({ initialized: true, isLoading: false });
+    }
   },
 }));
 
