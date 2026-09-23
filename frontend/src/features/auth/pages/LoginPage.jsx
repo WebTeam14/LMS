@@ -73,6 +73,8 @@ export default function LoginPage() {
         setTenantCandidates(err.details.tenantIds);
         setShowInstitution(true);
         setServerError('Your email belongs to more than one institution. Choose the correct campus to continue.');
+      } else if (err.status === 500 || err.message?.includes('500') || err.message?.includes('buffering timed out')) {
+        setServerError('Database connection timed out. Please ensure Docker Desktop and MongoDB are running.');
       } else {
         setServerError(err.message || 'Authentication failed. Please verify credentials.');
       }
