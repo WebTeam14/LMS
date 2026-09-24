@@ -56,3 +56,18 @@ export const resetPasswordSchema = z.object({
 export const verifyEmailSchema = z.object({
   token: z.string().min(1, 'Email verification token is required'),
 });
+
+export const enableMfaSchema = z.object({
+  code: z.string().trim().min(6, 'Verification code is required').max(10),
+});
+
+export const disableMfaSchema = z.object({
+  password: z.string().optional(),
+  code: z.string().optional(),
+});
+
+export const verifyMfaSchema = z.object({
+  mfaToken: z.string().min(1, 'MFA challenge session token is required'),
+  code: z.string().trim().min(6, 'Verification code is required').max(10),
+});
+

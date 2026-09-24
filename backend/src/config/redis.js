@@ -3,6 +3,7 @@ import config from './index.js';
 import logger from '../common/utils/logger.js';
 
 let redisClient = null;
+let hasLoggedDegraded = false;
 
 export const initRedis = () => {
   if (redisClient) return redisClient;
@@ -11,32 +12,44 @@ export const initRedis = () => {
     redisClient = new Redis(config.redisUrl, {
       maxRetriesPerRequest: 3,
       retryStrategy(times) {
-        if (times > 3) {
-          logger.warn('[Redis] Max reconnect attempts reached. Continuing in degraded mode.');
+        if (times > 2) {
+          if (!hasLoggedDegraded && config.env !== 'test') {
+            logger.warn('[Redis] Offline or max retries reached. Cache and queues running in direct in-process fallback mode.');
+            hasLoggedDegraded = true;
+          }
           return null; // Stop retrying
         }
-        return Math.min(times * 200, 2000);
+        return Math.min(times * 200, 1000);
       },
       lazyConnect: true,
     });
 
     redisClient.on('connect', () => {
+      hasLoggedDegraded = false;
       logger.info('[Redis] Connected successfully');
     });
 
     redisClient.on('error', (err) => {
-      if (config.env !== 'test') logger.warn(`[Redis] Connection warning: ${err.message}`);
+      if (config.env !== 'test' && !hasLoggedDegraded) {
+        logger.warn(`[Redis] Connection notice: ${err.message || 'Server not reachable'}`);
+      }
     });
 
     // Attempt non-blocking connect
     redisClient.connect().catch((err) => {
-      if (config.env !== 'test') logger.warn(`[Redis] Initial connection deferred: ${err.message}`);
+      if (config.env !== 'test' && !hasLoggedDegraded) {
+        logger.warn(`[Redis] Initial connection deferred: ${err.message || 'Server not reachable'}`);
+      }
     });
   } catch (error) {
-    if (config.env !== 'test') logger.warn(`[Redis] Initialization error: ${error.message}`);
+    if (config.env !== 'test') logger.warn(`[Redis] Initialization notice: ${error.message}`);
   }
 
   return redisClient;
+};
+
+export const isRedisConnected = () => {
+  return Boolean(redisClient && (redisClient.status === 'ready' || redisClient.status === 'connect'));
 };
 
 export const getRedisClient = () => {

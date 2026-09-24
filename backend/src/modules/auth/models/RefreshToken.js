@@ -47,6 +47,17 @@ const refreshTokenSchema = new Schema(
       type: String,
       default: null,
     },
+    device: {
+      browser: { type: String, default: 'Unknown Browser' },
+      os: { type: String, default: 'Unknown OS' },
+      deviceType: { type: String, default: 'desktop' },
+      deviceName: { type: String, default: 'Desktop Session' },
+    },
+    lastActiveAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
   },
   {
     timestamps: true,

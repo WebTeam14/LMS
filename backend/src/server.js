@@ -39,20 +39,29 @@ const start = async () => {
 
     // 3. Connect MongoDB
     if (config.env === 'development') {
-      mongoose
-        .connect(config.mongodbUri, { serverSelectionTimeoutMS: 2000 })
-        .then(() => logger.info('[DB] MongoDB connected'))
-        .catch((dbErr) => {
-          logger.warn(`[DB] MongoDB connection warning: ${dbErr.message}`);
-          logger.warn('[DB] Running in development mode with MongoDB disconnected. Start Docker or MongoDB service.');
-        });
+      try {
+        await mongoose.connect(config.mongodbUri, { serverSelectionTimeoutMS: 2000 });
+        logger.info('[DB] MongoDB connected');
+        const { seedInitialData } = await import('./common/utils/embeddedDb.js');
+        await seedInitialData();
+      } catch (dbErr) {
+        logger.warn(`[DB] Local MongoDB unreachable (${dbErr.message}). Starting embedded database fallback...`);
+        try {
+          const { startEmbeddedMongo } = await import('./common/utils/embeddedDb.js');
+          await startEmbeddedMongo();
+        } catch (embeddedErr) {
+          logger.warn(`[DB] Embedded MongoDB unavailable: ${embeddedErr.message}. Running in offline DB mode.`);
+        }
+      }
     } else {
       await mongoose.connect(config.mongodbUri);
       logger.info('[DB] MongoDB connected');
     }
 
-    // 4. Initialize Redis
+    // 4. Initialize Redis & Background Jobs
     initRedis();
+    const { startEmailWorker } = await import('./jobs/email.worker.js');
+    startEmailWorker();
 
     // 5. Start HTTP Server
     httpServer.listen(config.port, () => {

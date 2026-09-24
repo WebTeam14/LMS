@@ -55,6 +55,17 @@ const config = {
     bucket: process.env.S3_BUCKET || 'unisphere',
     region: process.env.S3_REGION || 'us-east-1',
   },
+  email: {
+    from: process.env.EMAIL_FROM || 'UniSphere Campus <no-reply@unisphere.edu>',
+    smtp: {
+      host: process.env.SMTP_HOST || 'smtp.ethereal.email',
+      port: parseInt(process.env.SMTP_PORT, 10) || 587,
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
+      secure: process.env.SMTP_SECURE === 'true',
+    },
+    clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+  },
 };
 
 export default config;

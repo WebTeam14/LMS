@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Tag, Badge, Alert, Spin } from 'antd';
-import { UniSphereLogo, LogoutIcon, ShieldCheckIcon } from '../../components/common/Icons.jsx';
+import {
+  UniSphereLogo,
+  LogoutIcon,
+  ShieldCheckIcon,
+  ArrowRightIcon,
+} from '../../components/common/Icons.jsx';
 import api from '../../services/api.js';
 import useAuthStore from '../../stores/useAuthStore.js';
 
@@ -94,10 +99,18 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                <Link
+                  to="/settings/security"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg shadow-2xs transition-colors"
+                >
+                  <ShieldCheckIcon className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Security</span>
+                </Link>
+
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 border border-slate-200/80 rounded-lg transition-colors"
+                  className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 border border-slate-200/80 rounded-lg transition-colors"
                 >
                   <LogoutIcon className="w-3.5 h-3.5" />
                   <span>Logout</span>
@@ -110,6 +123,45 @@ export default function DashboardPage() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
+        {/* Security & 2FA Quick Status Banner */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className={`w-10 h-10 rounded-xl grid place-items-center border ${
+              user?.mfaEnabled
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                : 'border-amber-200 bg-amber-50 text-amber-600'
+            }`}>
+              <ShieldCheckIcon className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-slate-900">
+                  Two-Factor Authentication: {user?.mfaEnabled ? 'Active' : 'Unprotected'}
+                </span>
+                <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
+                  user?.mfaEnabled
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}>
+                  {user?.mfaEnabled ? 'Protected' : 'Action Recommended'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {user?.mfaEnabled
+                  ? 'Your account is fortified with TOTP multi-factor verification on all logins.'
+                  : 'Enable 2FA and inspect active connected devices to protect your institutional account.'}
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/settings/security"
+            className="inline-flex items-center justify-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 border border-indigo-100 rounded-lg transition-colors shrink-0"
+          >
+            <span>{user?.mfaEnabled ? 'Manage Security' : 'Enable 2FA & Sessions'}</span>
+            <ArrowRightIcon className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+
         {/* Welcome Banner */}
         <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 rounded-2xl p-7 text-white shadow-sm border border-slate-800 relative overflow-hidden">
           <div className="relative z-10 max-w-3xl space-y-3">

@@ -85,6 +85,25 @@ const userSchema = new Schema(
       type: Date,
       select: false,
     },
+    mfaEnabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    mfaSecret: {
+      type: String,
+      select: false,
+    },
+    mfaBackupCodes: {
+      type: [
+        {
+          codeHash: { type: String, required: true },
+          used: { type: Boolean, default: false },
+          usedAt: { type: Date, default: null },
+        },
+      ],
+      select: false,
+    },
     isDeleted: {
       type: Boolean,
       default: false,
@@ -113,6 +132,8 @@ const userSchema = new Schema(
         delete ret.passwordResetExpires;
         delete ret.emailVerificationToken;
         delete ret.emailVerificationExpires;
+        delete ret.mfaSecret;
+        delete ret.mfaBackupCodes;
         delete ret.__v;
         return ret;
       },

@@ -14,8 +14,8 @@
 |-------|-------------------------------------------|---------------------|-------|
 | 0     | Product, Requirements & Architecture      | **COMPLETE**        | Specs, architecture, RBAC, DB schemas documented & audited |
 | 1     | Project Foundation & DevOps               | **COMPLETE**        | Docker (Mongo+Redis), Express modular monolith, Vite scaffold, CI |
-| 2     | Authentication, Security & RBAC           | **BACKEND COMPLETE**| JWT rotation, Lockout, RBAC middleware, 5 models, 37 passing tests |
-| 3     | University & Academic Structure           | NOT STARTED         | Next vertical slice |
+| 2     | Authentication, Security & RBAC           | **COMPLETE**        | Real email delivery, TOTP MFA + backup codes, Session telemetry, full Linear/Vercel Auth UI |
+| 3     | University & Academic Structure           | IN PROGRESS         | Next vertical slice |
 | 4     | Admissions                                | NOT STARTED         |       |
 | 5     | Student Information System                | NOT STARTED         |       |
 | 6     | Faculty Management                        | NOT STARTED         |       |
@@ -69,7 +69,7 @@
 
 ---
 
-## PHASE 2 — Authentication, Security & RBAC (Backend Slice)
+## PHASE 2 — Authentication, Security & RBAC (Complete Vertical Slice)
 
 ### Checklist
 - [x] Multi-tenant User schema with bcrypt password hashing, lockout logic, and compound index
@@ -86,11 +86,14 @@
 - [x] RBAC domain service (`role.service.js`) with system role seeding and management
 - [x] User management service (`user.service.js`) with pagination, filtering, updates, and soft deletion
 - [x] Controllers & routes mounted under `/api/v1/auth`, `/api/v1/users`, `/api/v1/roles`
-- [x] Unit test suites (`token.test.js`, `rbac.test.js`)
-- [x] Integration test suites (`auth.test.js`, `rbac_multitenant.test.js`, `health.test.js`, `validation.test.js`)
-- [x] Automated tests passing cleanly with zero failures
-- [x] ESLint passing with 0 errors and 0 warnings
-- [x] Database seeder (`scripts/seed.js`) populating system roles and default Super Administrator
+- [x] Asynchronous Email Service (Nodemailer HTML templates, BullMQ queue, graceful direct in-process fallback when Redis is offline)
+- [x] Time-Based One-Time Password (TOTP) Multi-Factor Authentication (`otplib`, QR codes, AES-256-GCM secret encryption, 8 single-use emergency backup codes)
+- [x] Active Session & Connected Device Tracking (User-Agent OS/browser parser, device telemetry in RefreshToken, per-session revocation & revoke all other devices)
+- [x] Interactive Two-Step MFA Login Challenge screen in `LoginPage.jsx`
+- [x] Dedicated Security & Access Settings page (`SecuritySettingsPage.jsx` at `/settings/security`) with Password Change, 2FA Enrollment/Disable, and Active Sessions
+- [x] Navigation links and live 2FA protection badge on `DashboardPage.jsx`
+- [x] Full automated test suite passing cleanly (`token.test.js`, `rbac.test.js`, `validation.test.js`, `phase2_security.test.js`)
+- [x] Mark Phase 2 complete (audited and verified)
 
 ---
 

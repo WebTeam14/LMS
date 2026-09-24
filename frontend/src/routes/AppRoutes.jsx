@@ -8,6 +8,7 @@ import RegisterPage from '../features/auth/pages/RegisterPage.jsx';
 import ForgotPasswordPage from '../features/auth/pages/ForgotPasswordPage.jsx';
 import ResetPasswordPage from '../features/auth/pages/ResetPasswordPage.jsx';
 import VerifyEmailPage from '../features/auth/pages/VerifyEmailPage.jsx';
+import SecuritySettingsPage from '../features/auth/pages/SecuritySettingsPage.jsx';
 import DashboardPage from '../features/dashboard/DashboardPage.jsx';
 
 /**
@@ -74,6 +75,14 @@ export const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/security"
+        element={
+          <ProtectedRoute>
+            <SecuritySettingsPage />
           </ProtectedRoute>
         }
       />

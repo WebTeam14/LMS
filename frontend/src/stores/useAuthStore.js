@@ -73,7 +73,26 @@ export const useAuthStore = create((set, get) => ({
   login: async ({ email, password, tenantId }) => {
     set({ isLoading: true });
     try {
-      const { user, tokens } = await authService.login({ email, password, tenantId });
+      const data = await authService.login({ email, password, tenantId });
+      if (data?.mfaRequired) {
+        return { mfaRequired: true, mfaToken: data.mfaToken, email: data.email };
+      }
+      get().setAuth({
+        user: data.user,
+        tokens: data.tokens,
+        roles: data.user.roles || [],
+        permissions: data.user.permissions || [],
+      });
+      return { success: true, user: data.user };
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  verifyMfaLogin: async ({ mfaToken, code }) => {
+    set({ isLoading: true });
+    try {
+      const { user, tokens } = await authService.verifyMfa({ mfaToken, code });
       get().setAuth({
         user,
         tokens,

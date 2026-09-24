@@ -1,4 +1,7 @@
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { generateSecret, generateURI, verifySync } from 'otplib';
+import qrcode from 'qrcode';
 import User from '../models/User.js';
 import Role from '../models/Role.js';
 import UserRole from '../models/UserRole.js';
@@ -6,11 +9,20 @@ import RefreshToken from '../models/RefreshToken.js';
 import AuditLog from '../models/AuditLog.js';
 import Tenant from '../../university/models/Tenant.js';
 import AppError from '../../../common/errors/AppError.js';
+import config from '../../../config/index.js';
+import { queueEmail } from '../../../jobs/email.queue.js';
 import {
   generateAccessToken,
   generateRandomTokenString,
   hashToken,
 } from '../../../common/utils/token.js';
+import {
+  encrypt,
+  decrypt,
+  generateBackupCodes,
+  hashBackupCode,
+} from '../../../common/utils/crypto.js';
+import { parseUserAgent } from '../../../common/utils/device.js';
 
 /**
  * Helper to extract role codes and merged distinct permissions
@@ -58,6 +70,7 @@ const issueTokenPair = async ({ user, tenantId, roles, permissions, ipAddress, u
   const refreshTokenString = generateRandomTokenString(40);
   const tokenHash = hashToken(refreshTokenString);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  const device = parseUserAgent(userAgent);
 
   await RefreshToken.create({
     userId: user._id,
@@ -66,6 +79,8 @@ const issueTokenPair = async ({ user, tenantId, roles, permissions, ipAddress, u
     expiresAt,
     ipAddress,
     userAgent,
+    device,
+    lastActiveAt: new Date(),
   });
 
   return {
@@ -130,6 +145,7 @@ export const register = async ({
     passwordHash,
     status: 'active',
     emailVerified: false,
+    mfaEnabled: false,
     emailVerificationToken,
     emailVerificationExpires,
   });
@@ -160,6 +176,13 @@ export const register = async ({
     userAgent,
   });
 
+  // Dispatch asynchronous verification email via BullMQ
+  await queueEmail('VERIFICATION_EMAIL', {
+    to: user.email,
+    name: user.fullName,
+    token: verificationToken,
+  });
+
   await AuditLog.create({
     tenantId,
     userId: user._id,
@@ -170,7 +193,7 @@ export const register = async ({
     userAgent,
   });
 
-  return {
+  const responseData = {
     user: {
       id: user._id.toString(),
       firstName: user.firstName,
@@ -180,13 +203,20 @@ export const register = async ({
       tenantId: user.tenantId,
       status: user.status,
       emailVerified: user.emailVerified,
+      mfaEnabled: false,
       roles,
       rolesDetail,
       permissions,
     },
     tokens,
-    verificationToken,
   };
+
+  // Only expose raw verification token in development/test mode
+  if (config.env !== 'production') {
+    responseData.verificationToken = verificationToken;
+  }
+
+  return responseData;
 };
 
 export const login = async ({ email, password, tenantId, ipAddress, userAgent }) => {
@@ -227,7 +257,7 @@ export const login = async ({ email, password, tenantId, ipAddress, userAgent })
   const query = { email: normalizedEmail, isDeleted: false };
   if (resolvedTenantId) query.tenantId = resolvedTenantId;
 
-  // Find user and explicitly select passwordHash + lockUntil + failedLoginAttempts
+  // Find user and explicitly select passwordHash + lockUntil + failedLoginAttempts + mfaEnabled
   const user = await User.findOne(query).select('+passwordHash +failedLoginAttempts +lockUntil');
 
   if (!user) {
@@ -277,6 +307,25 @@ export const login = async ({ email, password, tenantId, ipAddress, userAgent })
     throw new AppError('Your account is currently inactive.', 403, 'ACCOUNT_INACTIVE');
   }
 
+  // Multi-Factor Authentication: Challenge required
+  if (user.mfaEnabled) {
+    const mfaToken = jwt.sign(
+      {
+        sub: user._id.toString(),
+        tenantId: user.tenantId ? user.tenantId.toString() : null,
+        mfaPending: true,
+      },
+      config.jwt.accessSecret,
+      { expiresIn: '5m' }
+    );
+
+    return {
+      mfaRequired: true,
+      mfaToken,
+      email: user.email,
+    };
+  }
+
   // Reset login attempts on success
   await user.resetLoginAttempts(ipAddress);
 
@@ -308,6 +357,7 @@ export const login = async ({ email, password, tenantId, ipAddress, userAgent })
       email: user.email,
       tenantId: user.tenantId,
       status: user.status,
+      mfaEnabled: Boolean(user.mfaEnabled),
       roles,
       rolesDetail,
       permissions,
@@ -330,7 +380,6 @@ export const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
 
   // Check for Token Reuse (Hijack detection)
   if (tokenDoc.isRevoked) {
-    // Revoke all tokens for this compromised user
     await RefreshToken.updateMany(
       { userId: tokenDoc.userId },
       { $set: { isRevoked: true, revokedAt: new Date() } }
@@ -367,6 +416,7 @@ export const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
   // Generate replacement token
   const newRefreshTokenString = generateRandomTokenString(40);
   const newTokenHash = hashToken(newRefreshTokenString);
+  const device = parseUserAgent(userAgent);
 
   // Revoke previous token and set pointer
   tokenDoc.isRevoked = true;
@@ -382,6 +432,8 @@ export const refreshTokens = async ({ refreshToken, ipAddress, userAgent }) => {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     ipAddress,
     userAgent,
+    device,
+    lastActiveAt: new Date(),
   });
 
   const { roles, permissions } = await getUserRolesAndPermissions(user._id);
@@ -461,6 +513,13 @@ export const forgotPassword = async ({ email, tenantId, ipAddress, userAgent }) 
   user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
   await user.save();
 
+  // Dispatch asynchronous password reset email
+  await queueEmail('PASSWORD_RESET_EMAIL', {
+    to: user.email,
+    name: user.fullName,
+    token: resetToken,
+  });
+
   await AuditLog.create({
     tenantId: user.tenantId,
     userId: user._id,
@@ -470,10 +529,15 @@ export const forgotPassword = async ({ email, tenantId, ipAddress, userAgent }) 
     userAgent,
   });
 
-  return {
+  const responseData = {
     message: 'If an account exists with that email, a password reset link has been sent.',
-    resetToken, // Provided for testing and email worker dispatch
   };
+
+  if (config.env !== 'production') {
+    responseData.resetToken = resetToken;
+  }
+
+  return responseData;
 };
 
 export const resetPassword = async ({ token, newPassword, ipAddress, userAgent }) => {
@@ -499,6 +563,12 @@ export const resetPassword = async ({ token, newPassword, ipAddress, userAgent }
     { userId: user._id, isRevoked: false },
     { $set: { isRevoked: true, revokedAt: new Date() } }
   );
+
+  // Send security alert email
+  await queueEmail('PASSWORD_CHANGED_EMAIL', {
+    to: user.email,
+    name: user.fullName,
+  });
 
   await AuditLog.create({
     tenantId: user.tenantId,
@@ -569,6 +639,12 @@ export const changePassword = async ({ userId, currentPassword, newPassword, ipA
     { $set: { isRevoked: true, revokedAt: new Date() } }
   );
 
+  // Send security alert email
+  await queueEmail('PASSWORD_CHANGED_EMAIL', {
+    to: user.email,
+    name: user.fullName,
+  });
+
   await AuditLog.create({
     tenantId: user.tenantId,
     userId: user._id,
@@ -600,9 +676,319 @@ export const getMe = async (userId) => {
     tenantId: user.tenantId,
     status: user.status,
     emailVerified: user.emailVerified,
+    mfaEnabled: Boolean(user.mfaEnabled),
     lastLoginAt: user.lastLoginAt,
     roles,
     rolesDetail,
     permissions,
   };
+};
+
+// ==========================================
+// MULTI-FACTOR AUTHENTICATION (MFA)
+// ==========================================
+
+export const setupMfa = async (userId) => {
+  const user = await User.findById(userId).select('+mfaSecret +mfaBackupCodes');
+  if (!user || user.isDeleted) {
+    throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
+  }
+  if (user.mfaEnabled) {
+    throw new AppError('Multi-factor authentication is already enabled for this account.', 400, 'MFA_ALREADY_ENABLED');
+  }
+
+  const secret = generateSecret();
+  const otpauthUrl = generateURI({ secret, issuer: config.appName, label: user.email });
+  const qrCodeUrl = await qrcode.toDataURL(otpauthUrl);
+  const backupCodes = generateBackupCodes(8);
+
+  // Store encrypted secret & hashed backup codes staged for enablement
+  user.mfaSecret = encrypt(secret);
+  user.mfaBackupCodes = backupCodes.map((code) => ({
+    codeHash: hashBackupCode(code),
+    used: false,
+  }));
+  await user.save();
+
+  return {
+    secret,
+    qrCodeUrl,
+    backupCodes,
+  };
+};
+
+export const enableMfa = async ({ userId, code, ipAddress, userAgent }) => {
+  const user = await User.findById(userId).select('+mfaSecret +mfaBackupCodes');
+  if (!user || user.isDeleted) {
+    throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
+  }
+  if (!user.mfaSecret) {
+    throw new AppError('MFA setup must be initiated before enabling.', 400, 'MFA_NOT_SETUP');
+  }
+
+  const rawSecret = decrypt(user.mfaSecret);
+  const result = verifySync({ token: code, secret: rawSecret });
+  const isValid = Boolean(result && (result === true || result.valid === true));
+
+  if (!isValid) {
+    throw new AppError('Invalid verification code. Please check your authenticator app and try again.', 400, 'INVALID_MFA_CODE');
+  }
+
+  user.mfaEnabled = true;
+  await user.save();
+
+  await AuditLog.create({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: 'MFA_ENABLED',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    success: true,
+    message: 'Multi-factor authentication has been enabled successfully.',
+  };
+};
+
+export const disableMfa = async ({ userId, password, code, ipAddress, userAgent }) => {
+  const user = await User.findById(userId).select('+passwordHash +mfaSecret +mfaBackupCodes');
+  if (!user || user.isDeleted) {
+    throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
+  }
+  if (!user.mfaEnabled) {
+    throw new AppError('Multi-factor authentication is not currently enabled.', 400, 'MFA_NOT_ENABLED');
+  }
+
+  // Validate either password or TOTP code
+  let authenticated = false;
+  if (password) {
+    authenticated = await user.comparePassword(password);
+  }
+  if (!authenticated && code && user.mfaSecret) {
+    const rawSecret = decrypt(user.mfaSecret);
+    const result = verifySync({ token: code, secret: rawSecret });
+    authenticated = Boolean(result && (result === true || result.valid === true));
+  }
+
+  if (!authenticated) {
+    throw new AppError('Verification failed. Provide your correct password or a valid 6-digit authenticator code.', 400, 'VERIFICATION_FAILED');
+  }
+
+  user.mfaEnabled = false;
+  user.mfaSecret = undefined;
+  user.mfaBackupCodes = [];
+  await user.save();
+
+  await AuditLog.create({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: 'MFA_DISABLED',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    success: true,
+    message: 'Multi-factor authentication has been disabled.',
+  };
+};
+
+export const verifyMfaLogin = async ({ mfaToken, code, ipAddress, userAgent }) => {
+  let decoded;
+  try {
+    decoded = jwt.verify(mfaToken, config.jwt.accessSecret);
+  } catch {
+    throw new AppError('MFA challenge session has expired or is invalid. Please log in again.', 401, 'MFA_SESSION_EXPIRED');
+  }
+
+  if (!decoded.mfaPending || !decoded.sub) {
+    throw new AppError('Invalid MFA session token.', 401, 'INVALID_MFA_SESSION');
+  }
+
+  const user = await User.findById(decoded.sub).select('+mfaSecret +mfaBackupCodes');
+  if (!user || user.isDeleted || user.status !== 'active') {
+    throw new AppError('User account is invalid or no longer active.', 401, 'USER_INACTIVE');
+  }
+
+  let codeValid = false;
+  let isBackupCode = false;
+
+  // 1. Verify TOTP 6-digit code
+  if (user.mfaSecret) {
+    try {
+      const rawSecret = decrypt(user.mfaSecret);
+      const result = verifySync({ token: code, secret: rawSecret });
+      codeValid = Boolean(result && (result === true || result.valid === true));
+    } catch {
+      codeValid = false;
+    }
+  }
+
+  // 2. Fallback: check unused backup codes
+  if (!codeValid && Array.isArray(user.mfaBackupCodes)) {
+    const candidateHash = hashBackupCode(code);
+    const backupIndex = user.mfaBackupCodes.findIndex(
+      (b) => b.codeHash === candidateHash && !b.used
+    );
+
+    if (backupIndex !== -1) {
+      codeValid = true;
+      isBackupCode = true;
+      user.mfaBackupCodes[backupIndex].used = true;
+      user.mfaBackupCodes[backupIndex].usedAt = new Date();
+      await user.save();
+    }
+  }
+
+  if (!codeValid) {
+    await AuditLog.create({
+      tenantId: user.tenantId,
+      userId: user._id,
+      action: 'MFA_VERIFY_FAILED',
+      status: 'FAILURE',
+      ipAddress,
+      userAgent,
+    });
+    throw new AppError('Invalid verification code or backup code.', 401, 'INVALID_MFA_CODE');
+  }
+
+  // Reset login attempts
+  await user.resetLoginAttempts(ipAddress);
+
+  const { roles, rolesDetail, permissions } = await getUserRolesAndPermissions(user._id);
+  const tokens = await issueTokenPair({
+    user,
+    tenantId: user.tenantId,
+    roles,
+    permissions,
+    ipAddress,
+    userAgent,
+  });
+
+  await AuditLog.create({
+    tenantId: user.tenantId,
+    userId: user._id,
+    action: isBackupCode ? 'LOGIN_SUCCESS_MFA_BACKUP' : 'LOGIN_SUCCESS_MFA',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    user: {
+      id: user._id.toString(),
+      firstName: user.firstName,
+      lastName: user.lastName,
+      fullName: user.fullName,
+      email: user.email,
+      tenantId: user.tenantId,
+      status: user.status,
+      mfaEnabled: true,
+      roles,
+      rolesDetail,
+      permissions,
+    },
+    tokens,
+  };
+};
+
+// ==========================================
+// SESSION & DEVICE MANAGEMENT
+// ==========================================
+
+export const listSessions = async ({ userId, currentToken }) => {
+  const activeTokens = await RefreshToken.find({
+    userId,
+    isRevoked: false,
+    expiresAt: { $gt: new Date() },
+  }).sort({ lastActiveAt: -1, createdAt: -1 });
+
+  const currentTokenHash = currentToken ? hashToken(currentToken) : null;
+
+  return activeTokens.map((t) => ({
+    id: t._id.toString(),
+    device: t.device || parseUserAgent(t.userAgent),
+    ipAddress: t.ipAddress || 'Unknown',
+    lastActiveAt: t.lastActiveAt || t.updatedAt,
+    createdAt: t.createdAt,
+    isCurrentSession: Boolean(currentTokenHash && t.tokenHash === currentTokenHash),
+  }));
+};
+
+export const revokeSession = async ({ userId, sessionId, ipAddress, userAgent }) => {
+  const tokenDoc = await RefreshToken.findOne({ _id: sessionId, userId });
+  if (!tokenDoc) {
+    throw new AppError('Session not found or already terminated.', 404, 'SESSION_NOT_FOUND');
+  }
+
+  tokenDoc.isRevoked = true;
+  tokenDoc.revokedAt = new Date();
+  await tokenDoc.save();
+
+  await AuditLog.create({
+    tenantId: tokenDoc.tenantId,
+    userId,
+    action: 'SESSION_REVOKED',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+    metadata: { sessionId },
+  });
+
+  return { success: true, message: 'Session terminated successfully.' };
+};
+
+export const revokeOtherSessions = async ({ userId, currentToken, ipAddress, userAgent }) => {
+  if (!currentToken) {
+    throw new AppError('Current session token is required to preserve active session.', 400, 'TOKEN_REQUIRED');
+  }
+
+  const currentHash = hashToken(currentToken);
+  const result = await RefreshToken.updateMany(
+    {
+      userId,
+      tokenHash: { $ne: currentHash },
+      isRevoked: false,
+    },
+    {
+      $set: { isRevoked: true, revokedAt: new Date() },
+    }
+  );
+
+  await AuditLog.create({
+    userId,
+    action: 'OTHER_SESSIONS_REVOKED',
+    status: 'SUCCESS',
+    ipAddress,
+    userAgent,
+    metadata: { revokedCount: result.modifiedCount },
+  });
+
+  return {
+    success: true,
+    revokedCount: result.modifiedCount,
+    message: `Terminated ${result.modifiedCount} other active session(s).`,
+  };
+};
+
+export default {
+  register,
+  login,
+  refreshTokens,
+  logout,
+  forgotPassword,
+  resetPassword,
+  verifyEmail,
+  changePassword,
+  getMe,
+  setupMfa,
+  enableMfa,
+  disableMfa,
+  verifyMfaLogin,
+  listSessions,
+  revokeSession,
+  revokeOtherSessions,
 };
